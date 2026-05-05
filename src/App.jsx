@@ -3,6 +3,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
+
 import FileUpload from './components/FileUpload';
 import IdListPanel from './components/IdListPanel';
 import { StaticPreview, AnimationPreview } from './components/PreviewPanel';
@@ -256,7 +257,42 @@ export default function App() {
       showToast(`加载 ID ${entry.id} 失败: ${result.error}`, 'error');
     }
     setImageLoading(false);
+    
   }, [staticEntries, showToast]);
+
+// 预加载附近条目的缓存
+let preloadTaskId = 0;
+function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) {
+  const taskId = ++preloadTaskId;
+  const idx = entries.findIndex(e => e.id === currentEntry.id);
+  if (idx < 0) return;
+  
+  // 每隔 500 条，取前后各 1000 条（共 2000 条范围）
+  const PRELOAD_RANGE = 1000;
+  const STEP = 500;
+  const start = Math.max(0, idx - PRELOAD_RANGE);
+  const end = Math.min(entries.length, idx + PRELOAD_RANGE + 1);
+  
+  // 分批处理，不阻塞主线程
+  setTimeout(async () => {
+    if (taskId !== preloadTaskId) return; // 新任务取消了旧任务
+    for (let i = start; i < end; i++) {
+      const e = entries[i];
+      const key = `static_${e.id}`;
+      if (cache.has(key)) continue;
+      // 只在 STEP 间隔的边界加载
+      if ((i - start) % STEP !== 0 && (i - start) !== 0 && (i - start) !== (end - start - 1)) continue;
+      try {
+        const result = await loadStaticImage(realBlob, e, palettes);
+        if (result.dataUrl) {
+          cache.set(key, result);
+        }
+      } catch {
+        // 静默失败
+      }
+    }
+  }, 200); // 延迟 200ms 在主加载完成后执行
+}
 
   const handlePrevStatic = useCallback(() => {
     if (!staticEntries || currentImageInfo == null) return;
@@ -459,7 +495,7 @@ export default function App() {
         display: 'flex', gap: 16, minHeight: 'calc(100vh - 80px)', height: 'calc(100vh - 80px)',
       }}>
         <div style={{
-          flex: '0 0 320px', backgroundColor: '#fff', borderRadius: 12,
+          flex: '0 0 328px', backgroundColor: '#fff', borderRadius: 12,
           border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
           <div style={{ padding: 16, borderBottom: '1px solid #e5e7eb' }}>

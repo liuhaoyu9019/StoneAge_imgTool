@@ -41,15 +41,38 @@ export default function IdListPanel({
     return () => window.removeEventListener('resize', handleResize);
   }, [hasData, measureHeight]);
   
+  // 用 selectedIds 作为依赖，确保选中变化时列表重新计算
+  // 注意: 这些 const 声明必须放在 displayItems 之前，因为 displayItems 引用了 searchTerm 和 filteredItems
+  const [searchTerm, setSearchTerm] = useState('');
+  const filteredItems = useMemo(() => {
+    if (!items) return [];
+    if (!searchTerm) return items;
+    const term = searchTerm.toLowerCase();
+    // 如果是纯数字搜索，显示匹配项前后各 10 个，方便上下切换
+    if (/^\d+$/.test(term)) {
+      const targetNum = parseInt(term, 10);
+      const exactIdx = items.findIndex(item => {
+        const id = item.id ?? item;
+        return id === targetNum;
+      });
+      return items;
+    }
+    return items;
+  }, [items, searchTerm]);
+  
+  const displayItems = useMemo(() => searchTerm ? filteredItems : items, [items, searchTerm, filteredItems, selectedIds]);
+  
   // scrollToId 变化时滚动列表到对应位置
   const scrolledRef = useRef(null);
   useEffect(() => {
     if (scrollToId == null || !items || !containerRef.current) return;
-    const idx = items.findIndex(item => (item.id ?? item) === scrollToId);
+    const targetArray = searchTerm ? displayItems : items;
+    const idx = targetArray.findIndex(item => (item.id ?? item) === scrollToId);
     if (idx < 0) return;
     const targetScroll = idx * ITEM_HEIGHT - containerHeight / 2 + ITEM_HEIGHT / 2;
     containerRef.current.scrollTop = Math.max(0, targetScroll);
-  }, [scrollToId, items, containerHeight]);
+    setScrollTop(containerRef.current.scrollTop);
+  }, [scrollToId, items, containerHeight, displayItems, searchTerm]);
   
   const totalItems = items?.length || 0;
   const totalHeight = totalItems * ITEM_HEIGHT;
@@ -60,18 +83,22 @@ export default function IdListPanel({
     return { start, end };
   }, [scrollTop, containerHeight, totalItems]);
   
-  // 搜索功能
-  const [searchTerm, setSearchTerm] = useState('');
+  // 搜索功能（searchTerm 和 filteredItems 已在前面定义）
   
-  const filteredItems = useMemo(() => {
-    if (!items) return [];
-    if (!searchTerm) return items;
-    const term = searchTerm.toLowerCase();
-    return items.filter(item => {
-      const id = item.id ?? item;
-      return String(id).includes(term) || (item.name && item.name.toLowerCase().includes(term));
-    });
-  }, [items, searchTerm]);
+  // 纯数字搜索时自动选中匹配项
+  const prevSearchRef = useRef('');
+  useEffect(() => {
+    if (!items || !searchTerm || !onSelect) return;
+    if (searchTerm === prevSearchRef.current) return;
+    prevSearchRef.current = searchTerm;
+    const m = searchTerm.match(/^(\d+)$/);
+    if (!m) return;
+    const targetId = parseInt(m[1], 10);
+    const match = items.find(item => (item.id ?? item) === targetId);
+    if (match) {
+      onSelect(targetId);
+    }
+  }, [searchTerm, items, onSelect]);
   
   const handleScroll = useCallback((e) => {
     setScrollTop(e.target.scrollTop);
@@ -90,7 +117,6 @@ export default function IdListPanel({
     );
   }
   
-  const displayItems = searchTerm ? filteredItems : items;
   const displayTotal = displayItems.length;
   const displayHeight = displayTotal * ITEM_HEIGHT;
   
@@ -142,8 +168,10 @@ export default function IdListPanel({
         ref={(el) => { containerRef.current = el; if (el) measureHeight(); }}
         onScroll={handleScroll}
         style={{
-          flex: 1, overflowY: 'auto', overflowX: 'hidden',
+          flex: 1, overflowY: 'scroll', overflowX: 'hidden',
           position: 'relative',
+          paddingRight: 4,
+          minHeight: 200,
         }}
       >
         <div style={{ height: displayHeight, position: 'relative' }}>
@@ -166,7 +194,6 @@ export default function IdListPanel({
                   cursor: 'pointer',
                   backgroundColor: isCurrent ? '#eff6ff' : 'transparent',
                   borderLeft: isCurrent ? '3px solid #3b82f6' : '3px solid transparent',
-                  transition: 'background-color 0.1s',
                   userSelect: 'none',
                   boxSizing: 'border-box',
                 }}

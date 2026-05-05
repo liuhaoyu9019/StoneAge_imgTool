@@ -30,7 +30,7 @@ function ZoomableCanvas({ canvas, width, height, onPrev, onNext }) {
         display: 'flex', flexDirection: 'column',
         backgroundColor: '#f3f4f6',
       }}>
-        <div ref={containerRef} onWheel={handleWheel} style={{
+        <div ref={containerRef} onWheel={handleWheel} onClick={onNext} style={{
           flex: 1, overflow: 'hidden',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           backgroundColor: '#f3f4f6', position: 'relative',
