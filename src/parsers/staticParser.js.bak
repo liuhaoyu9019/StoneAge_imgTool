@@ -1,0 +1,104 @@
+/**
+ * 石器时代静态图解析器 - 精简版
+ * 只负责读取数据和按需转换像素，索引解析移到 Web Worker
+ */
+
+import { readBlobSlice, convertRGB565ToRGBA } from '../utils/fileReader';
+
+/**
+ * 完整读取 adrn 文件到 ArrayBuffer
+ */
+export function readAdrnBuffer(adrnBlob) {
+  return new Promise((resolve, reject) => {
+    if (adrnBlob.size > 200 * 1024 * 1024) {
+      reject(new Error('adrn 文件超过 200MB，可能不是索引文件'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('读取 adrn 失败'));
+    reader.readAsArrayBuffer(adrnBlob);
+  });
+}
+
+/**
+ * 读取 spradrn 文件到 ArrayBuffer
+ */
+export function readSpradrnBuffer(spradrnBlob) {
+  return new Promise((resolve, reject) => {
+    if (spradrnBlob.size > 200 * 1024 * 1024) {
+      reject(new Error('spradrn 文件超过 200MB，可能不是索引文件'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('读取 spradrn 失败'));
+    reader.readAsArrayBuffer(spradrnBlob);
+  });
+}
+
+/**
+ * 按需读取单张静态图
+ */
+export async function loadStaticImage(realBlob, entry) {
+  const { id, offset, width, height, transColor } = entry;
+  const length = Math.min(width * height * 2, 5000000);
+  try {
+    let pixelBuf;
+    if (offset > 0 && offset + length <= realBlob.size) {
+      pixelBuf = await readBlobSlice(realBlob, offset, length);
+    } else {
+      const expectedSize = width * height * 2;
+      const calcOffset = id * expectedSize;
+      if (calcOffset + expectedSize <= realBlob.size) {
+        pixelBuf = await readBlobSlice(realBlob, calcOffset, expectedSize);
+      } else {
+        return { id, width, height, imageData: null, error: `数据超出 real 文件范围` };
+      }
+    }
+    const rgba = convertRGB565ToRGBA(pixelBuf, transColor, width, height);
+    const imgData = new ImageData(width, height);
+    imgData.data.set(rgba);
+    return { id, width, height, imageData: imgData };
+  } catch (e) {
+    return { id, width, height, imageData: null, error: e.message };
+  }
+}
+
+/**
+ * 按需读取单组动画帧
+ */
+export async function loadAnimationGroup(sprBlob, group) {
+  const frames = [];
+  
+  if (group.frameOffsets && group.frameOffsets.length > 0) {
+    for (let f = 0; f < Math.min(group.frameOffsets.length, 256); f++) {
+      const sprOffset = group.frameOffsets[f];
+      const nextOffset = f + 1 < group.frameOffsets.length ? group.frameOffsets[f + 1] : sprBlob.size;
+      const length = nextOffset - sprOffset;
+      
+      if (sprOffset < 0 || sprOffset + 4 > sprBlob.size) continue;
+      
+      try {
+        const headBuf = await readBlobSlice(sprBlob, sprOffset, Math.min(length, 8));
+        const headView = new DataView(headBuf);
+        let fw = headView.getUint16(0, true);
+        let fh = headView.getUint16(2, true);
+        if (fw <= 0 || fw > 2048 || fh <= 0 || fh > 2048) { fw = group.defaultWidth; fh = group.defaultHeight; }
+        
+        const pixelStart = sprOffset + 4;
+        const pixelLength = length - 4;
+        const actual = Math.min(pixelLength, fw * fh * 2);
+        if (actual <= 0) continue;
+        
+        const pixelBuf = await readBlobSlice(sprBlob, pixelStart, actual);
+        const rgba = convertRGB565ToRGBA(pixelBuf, null, fw, fh);
+        const imgData = new ImageData(fw, fh);
+        imgData.data.set(rgba);
+        frames.push({ width: fw, height: fh, imageData: imgData, error: null });
+      } catch { continue; }
+    }
+    return frames;
+  }
+  return frames;
+}

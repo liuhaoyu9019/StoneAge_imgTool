@@ -1,0 +1,192 @@
+/**
+ * 解析 Worker - 所有重计算在后台线程完成
+ * 支持分页返回，避免一次传输大量数据
+ */
+
+const PAGE_SIZE = 500;
+
+self.onmessage = function(e) {
+  const { type, payload, page } = e.data;
+  
+  try {
+    if (type === 'parseAdrn') {
+      const result = parseAdrnFromBuffer(payload.buffer, payload.adrnSize);
+      // 一次性返回所有结果（但只有 ID + 维度信息，很轻量）
+      self.postMessage({ type: 'adrnResult', payload: result }, [payload.buffer]);
+      
+    } else if (type === 'parseAdrnPage') {
+      const result = parseAdrnPage(payload.buffer, payload.page, PAGE_SIZE);
+      self.postMessage({
+        type: 'adrnPageResult',
+        payload: {
+          page: payload.page,
+          entries: result.entries,
+          totalValid: result.total,
+          isLast: result.isLast,
+        }
+      });
+      
+    } else if (type === 'parseSpradrn') {
+      const result = parseSpradrnFromBuffer(payload.buffer);
+      self.postMessage({ type: 'spradrnResult', payload: result }, [payload.buffer]);
+    }
+  } catch (err) {
+    self.postMessage({ type: 'error', payload: err.message });
+  }
+};
+
+function detectSize(fileSize, candidates) {
+  for (const s of candidates) { if (fileSize % s === 0) return s; }
+  let best = candidates[0], bestRem = Infinity;
+  for (const s of candidates) { const r = fileSize % s; if (r < bestRem) { bestRem = r; best = s; } }
+  return best;
+}
+
+function parseAdrnFromBuffer(buffer, adrnSize) {
+  const entrySize = detectSize(buffer.byteLength, [40, 264, 32, 48, 64]);
+  const dataView = new DataView(buffer);
+  const count = Math.floor(buffer.byteLength / entrySize);
+  const entries = [];
+  
+  for (let i = 0; i < count; i++) {
+    const off = i * entrySize;
+    try {
+      const entry = readAdrnEntry(dataView, off, entrySize);
+      if (entry.width <= 0 || entry.height <= 0) continue;
+      if (entry.width > 2048 || entry.height > 2048) continue;
+      entries.push({
+        id: i,
+        offset: entry.offset || 0,
+        width: entry.width,
+        height: entry.height,
+        transColor: entry.transColor,
+        length: entry.width * entry.height * 2,
+        name: entry.name || '',
+      });
+    } catch(_) {}
+  }
+  if (entries.length === 0) throw new Error('adrn 无效');
+  return { entrySize, entries };
+}
+
+function parseAdrnPage(buffer, page, pageSize) {
+  const fileSize = buffer.byteLength;
+  const entrySize = detectSize(fileSize, [40, 264, 32, 48, 64]);
+  const dataView = new DataView(buffer);
+  const count = Math.floor(fileSize / entrySize);
+  const start = page * pageSize;
+  const end = Math.min(start + pageSize, count);
+  const entries = [];
+  let total = 0;
+  
+  // 遍历整个文件来统计总数，同时收集当前页的有效条目
+  for (let i = 0; i < count; i++) {
+    const off = i * entrySize;
+    try {
+      const entry = readAdrnEntry(dataView, off, entrySize);
+      if (entry.width <= 0 || entry.height <= 0) continue;
+      if (entry.width > 2048 || entry.height > 2048) continue;
+      
+      if (i >= start && i < end) {
+        entries.push({
+          id: i,
+          offset: entry.offset || 0,
+          width: entry.width, height: entry.height,
+          transColor: entry.transColor,
+          length: entry.width * entry.height * 2,
+          name: entry.name || '',
+        });
+      }
+      total++;
+    } catch(_) {}
+  }
+  
+  return {
+    entries,
+    total,
+    isLast: end >= count,
+  };
+}
+
+function parseSpradrnFromBuffer(buffer) {
+  const fileSize = buffer.byteLength;
+  if (fileSize < 8) throw new Error('spradrn 文件太小');
+  
+  const dataView = new DataView(buffer);
+  const candidates = [32, 40, 48, 64, 68, 80, 128, 144, 160];
+  const headerVal = dataView.getUint32(0, true);
+  let entrySize, count, hasHeader;
+  
+  if (headerVal > 0 && headerVal < 5000) {
+    const wh = fileSize - 4;
+    for (const s of candidates) {
+      if (wh % s === 0 && wh / s === headerVal) { entrySize = s; count = headerVal; hasHeader = true; break; }
+    }
+  }
+  if (!entrySize) {
+    for (const s of candidates) {
+      if (fileSize % s === 0) { const c = fileSize / s; if (c >= 1 && c <= 5000) { entrySize = s; count = c; hasHeader = false; break; } }
+    }
+  }
+  if (!entrySize) {
+    for (const s of candidates) { if ((fileSize - 4) % s === 0) { const c = (fileSize - 4) / s; if (c >= 1 && c <= 5000) { entrySize = s; count = c; hasHeader = true; break; } } }
+  }
+  if (!entrySize) { entrySize = 64; count = Math.floor(fileSize / 64); hasHeader = false; }
+  
+  const startOffset = hasHeader ? 4 : 0;
+  const groups = [];
+  for (let g = 0; g < count; g++) {
+    const offset = startOffset + g * entrySize;
+    const group = { id: g, frameCount: 1, delay: 100, defaultWidth: 64, defaultHeight: 64, frameOffsets: [] };
+    for (const pos of [2, 4, 6, 8, 10, 12, 18, 20, 24]) {
+      if (offset + pos + 2 <= fileSize) { const val = dataView.getUint16(offset + pos, true); if (val > 0 && val < 256) { group.frameCount = val; break; } }
+    }
+    for (const pos of [4, 6, 8, 10, 12, 14, 16]) {
+      if (offset + pos + 2 <= fileSize) { const val = dataView.getUint16(offset + pos, true); if (val > 0 && val < 100) { group.delay = val; break; } }
+    }
+    for (const [wp, hp] of [[4, 6], [20, 22], [24, 26], [32, 34]]) {
+      if (offset + wp + 2 <= fileSize && offset + hp + 2 <= fileSize) {
+        const w = dataView.getUint16(offset + wp, true); const h = dataView.getUint16(offset + hp, true);
+        if (w > 0 && w < 2048 && h > 0 && h < 2048) { group.defaultWidth = w; group.defaultHeight = h; break; }
+      }
+    }
+    for (const pos of [24, 28, 32, 36, 40, 44, 48, 52, 56, 60]) {
+      if (offset + pos + 4 * group.frameCount <= fileSize) {
+        const offsets = []; let valid = true;
+        for (let f = 0; f < Math.min(group.frameCount, 256); f++) {
+          const fo = dataView.getUint32(offset + pos + f * 4, true);
+          if (fo > 50000000 || fo < 0) { valid = false; break; }
+          offsets.push(fo);
+        }
+        if (valid && offsets.length > 0) { group.frameOffsets = offsets; break; }
+      }
+    }
+    groups.push(group);
+  }
+  return groups;
+}
+
+function readAdrnEntry(dv, offset, entrySize) {
+  const entry = {};
+  if (entrySize >= 264) {
+    const nb = new Uint8Array(dv.buffer, dv.byteOffset + offset, 32);
+    let name = '';
+    for (let i = 0; i < 32 && nb[i] !== 0; i++) name += String.fromCharCode(nb[i]);
+    entry.name = name;
+    entry.offset = dv.getUint32(offset + 32, true);
+    entry.width = dv.getUint16(offset + 36, true);
+    entry.height = dv.getUint16(offset + 38, true);
+    entry.transColor = dv.getUint16(offset + 40, true);
+  } else if (entrySize >= 40) {
+    entry.offset = dv.getUint32(offset, true);
+    entry.width = dv.getUint16(offset + 4, true);
+    entry.height = dv.getUint16(offset + 6, true);
+    entry.transColor = dv.getUint16(offset + 8, true);
+  } else if (entrySize >= 32) {
+    entry.offset = dv.getUint32(offset, true);
+    entry.width = dv.getUint16(offset + 4, true);
+    entry.height = dv.getUint16(offset + 6, true);
+    entry.transColor = dv.getUint16(offset + 8, true);
+  }
+  return entry;
+}

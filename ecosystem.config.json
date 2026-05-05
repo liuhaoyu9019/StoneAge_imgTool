@@ -1,0 +1,12 @@
+{
+  "name": "pet-viewer",
+  "script": "npx vite",
+  "args": "--host 0.0.0.0 --port 5173",
+  "cwd": "/home/liuhaoyu/shiqishidai/pet-viewer",
+  "interpreter": "none",
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "restart_delay": 5000,
+  "max_restarts": 10
+}

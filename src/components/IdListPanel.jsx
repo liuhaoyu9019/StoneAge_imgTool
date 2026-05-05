@@ -1,0 +1,236 @@
+/**
+ * ID 列表面板 - 虚拟滚动版本
+ * 只渲染可视区域的条目，支持海量数据（24万+）
+ */
+
+import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
+
+const ITEM_HEIGHT = 32; // 每个条目的高度
+const OVERSCAN = 10;    // 上下额外渲染的行数
+
+export default function IdListPanel({
+  items,
+  type,
+  selectedId,
+  onSelect,
+  selectedIds,
+  onToggleSelect,
+  onSelectAll,
+  onDeselectAll,
+  onBatchExport,
+  loading,
+  hasData,
+  scrollToId,
+}) {
+  const containerRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(400);
+  
+  // 测量容器高度：在 hasData 变化时重新测量
+  const measureHeight = useCallback(() => {
+    if (containerRef.current) {
+      const h = containerRef.current.clientHeight;
+      if (h > 0) setContainerHeight(h);
+    }
+  }, []);
+  
+  useEffect(() => {
+    measureHeight();
+    const handleResize = () => measureHeight();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [hasData, measureHeight]);
+  
+  // scrollToId 变化时滚动列表到对应位置
+  const scrolledRef = useRef(null);
+  useEffect(() => {
+    if (scrollToId == null || !items || !containerRef.current) return;
+    const idx = items.findIndex(item => (item.id ?? item) === scrollToId);
+    if (idx < 0) return;
+    const targetScroll = idx * ITEM_HEIGHT - containerHeight / 2 + ITEM_HEIGHT / 2;
+    containerRef.current.scrollTop = Math.max(0, targetScroll);
+  }, [scrollToId, items, containerHeight]);
+  
+  const totalItems = items?.length || 0;
+  const totalHeight = totalItems * ITEM_HEIGHT;
+  
+  const visibleRange = useMemo(() => {
+    const start = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - OVERSCAN);
+    const end = Math.min(totalItems, Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + OVERSCAN);
+    return { start, end };
+  }, [scrollTop, containerHeight, totalItems]);
+  
+  // 搜索功能
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  const filteredItems = useMemo(() => {
+    if (!items) return [];
+    if (!searchTerm) return items;
+    const term = searchTerm.toLowerCase();
+    return items.filter(item => {
+      const id = item.id ?? item;
+      return String(id).includes(term) || (item.name && item.name.toLowerCase().includes(term));
+    });
+  }, [items, searchTerm]);
+  
+  const handleScroll = useCallback((e) => {
+    setScrollTop(e.target.scrollTop);
+  }, []);
+  
+  const handleSearchChange = useCallback((e) => {
+    setSearchTerm(e.target.value);
+    setScrollTop(0);
+  }, []);
+  
+  if (!hasData || !items || items.length === 0) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', fontSize: 13, padding: 20, textAlign: 'center' }}>
+        <div><div style={{ fontSize: 24, marginBottom: 8 }}>⬆️</div><div>请上传文件后查看列表</div></div>
+      </div>
+    );
+  }
+  
+  const displayItems = searchTerm ? filteredItems : items;
+  const displayTotal = displayItems.length;
+  const displayHeight = displayTotal * ITEM_HEIGHT;
+  
+  // 计算当前用于虚拟滚动的可见范围
+  const visStart = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - OVERSCAN);
+  const visEnd = Math.min(displayTotal, Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + OVERSCAN);
+  
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* 搜索框 */}
+      <div style={{ padding: '8px 8px 4px' }}>
+        <input
+          type="text"
+          placeholder="搜索 ID 或名称..."
+          value={searchTerm}
+          onChange={handleSearchChange}
+          style={{
+            width: '100%',
+            padding: '6px 8px',
+            fontSize: 12,
+            border: '1px solid #d1d5db',
+            borderRadius: 6,
+            outline: 'none',
+            boxSizing: 'border-box',
+            backgroundColor: '#f9fafb',
+          }}
+        />
+      </div>
+      
+      {/* 工具栏 */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '4px 8px', borderBottom: '1px solid #e5e7eb',
+      }}>
+        <span style={{ fontSize: 12, color: '#6b7280' }}>
+          {searchTerm
+            ? `搜索: ${displayTotal} 项`
+            : `${type === 'static' ? '宠物' : '动画'} (${displayTotal})`
+          }
+        </span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={onSelectAll} style={{ padding: '2px 8px', fontSize: 11, color: '#3b82f6', backgroundColor: 'transparent', border: '1px solid #3b82f6', borderRadius: 3, cursor: 'pointer' }}>全选</button>
+          <button onClick={onDeselectAll} style={{ padding: '2px 8px', fontSize: 11, color: '#6b7280', backgroundColor: 'transparent', border: '1px solid #d1d5db', borderRadius: 3, cursor: 'pointer' }}>取消</button>
+        </div>
+      </div>
+      
+      {/* 虚拟列表 */}
+      <div
+        ref={(el) => { containerRef.current = el; if (el) measureHeight(); }}
+        onScroll={handleScroll}
+        style={{
+          flex: 1, overflowY: 'auto', overflowX: 'hidden',
+          position: 'relative',
+        }}
+      >
+        <div style={{ height: displayHeight, position: 'relative' }}>
+          {displayItems.slice(visStart, visEnd).map((item, idx) => {
+            const realIdx = visStart + idx;
+            const id = item.id ?? item;
+            const isSelected = selectedIds.has(id);
+            const isCurrent = selectedId === id;
+            
+            return (
+              <div
+                key={id}
+                onClick={() => {onSelect(id); window.__lastClickedId = id;}}
+                style={{
+                  position: 'absolute',
+                  top: realIdx * ITEM_HEIGHT,
+                  left: 0, right: 0, height: ITEM_HEIGHT,
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '0 8px',
+                  cursor: 'pointer',
+                  backgroundColor: isCurrent ? '#eff6ff' : 'transparent',
+                  borderLeft: isCurrent ? '3px solid #3b82f6' : '3px solid transparent',
+                  transition: 'background-color 0.1s',
+                  userSelect: 'none',
+                  boxSizing: 'border-box',
+                }}
+                onMouseEnter={(e) => { if (!isCurrent) e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
+                onMouseLeave={(e) => { if (!isCurrent) e.currentTarget.style.backgroundColor = 'transparent'; }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={(e) => { e.stopPropagation(); onToggleSelect(id); }}
+                  style={{ width: 13, height: 13, cursor: 'pointer', flexShrink: 0 }}
+                />
+                <span style={{
+                  fontSize: 12, fontFamily: 'monospace',
+                  color: isCurrent ? '#1e40af' : '#374151',
+                  fontWeight: isCurrent ? 600 : 400,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                  {String(id).padStart(3, '0')}
+                </span>
+                {item.width && item.height ? (
+                  <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 'auto', flexShrink: 0 }}>
+                    {item.width}×{item.height}
+                  </span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        {loading && (
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(255,255,255,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 13, color: '#3b82f6', zIndex: 5,
+          }}>
+            <div style={{
+              width: 14, height: 14,
+              border: '2px solid #e5e7eb', borderTopColor: '#3b82f6',
+              borderRadius: '50%', animation: 'spin 0.8s linear infinite',
+              marginRight: 6,
+            }} />
+            加载中...
+          </div>
+        )}
+      </div>
+      
+      {/* 批量导出 */}
+      <div style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+        <button
+          onClick={onBatchExport}
+          disabled={selectedIds.size === 0}
+          style={{
+            width: '100%', padding: '8px 0', fontSize: 13, fontWeight: 500,
+            color: selectedIds.size > 0 ? '#fff' : '#9ca3af',
+            backgroundColor: selectedIds.size > 0 ? '#3b82f6' : '#e5e7eb',
+            border: 'none', borderRadius: 6,
+            cursor: selectedIds.size > 0 ? 'pointer' : 'not-allowed',
+            transition: 'all 0.2s',
+          }}
+        >
+          批量导出 ({selectedIds.size})
+        </button>
+      </div>
+    </div>
+  );
+}
