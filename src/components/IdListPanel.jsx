@@ -95,10 +95,17 @@ export default function IdListPanel({
     if (!m) return;
     const targetId = parseInt(m[1], 10);
     const match = items.find(item => (item.id ?? item) === targetId);
-    if (match) {
+    if (match && containerRef.current) {
       onSelect(targetId);
+      // 搜索完成后立即滚动到中间
+      const idx = items.findIndex(item => (item.id ?? item) === targetId);
+      if (idx >= 0) {
+        const targetScroll = idx * ITEM_HEIGHT - containerHeight / 2 + ITEM_HEIGHT / 2;
+        containerRef.current.scrollTop = Math.max(0, targetScroll);
+        setScrollTop(containerRef.current.scrollTop);
+      }
     }
-  }, [searchTerm, items, onSelect]);
+  }, [searchTerm, items, onSelect, containerHeight]);
   
   const handleScroll = useCallback((e) => {
     setScrollTop(e.target.scrollTop);
@@ -203,7 +210,8 @@ export default function IdListPanel({
                 <input
                   type="checkbox"
                   checked={isSelected}
-                  onChange={(e) => { e.stopPropagation(); onToggleSelect(id); }}
+                  onChange={() => onToggleSelect(id)}
+                  onClick={(e) => e.stopPropagation()}
                   style={{ width: 13, height: 13, cursor: 'pointer', flexShrink: 0 }}
                 />
                 <span style={{
@@ -242,21 +250,37 @@ export default function IdListPanel({
       </div>
       
       {/* 批量导出 */}
-      <div style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
-        <button
-          onClick={onBatchExport}
-          disabled={selectedIds.size === 0}
-          style={{
-            width: '100%', padding: '8px 0', fontSize: 13, fontWeight: 500,
-            color: selectedIds.size > 0 ? '#fff' : '#9ca3af',
-            backgroundColor: selectedIds.size > 0 ? '#3b82f6' : '#e5e7eb',
-            border: 'none', borderRadius: 6,
-            cursor: selectedIds.size > 0 ? 'pointer' : 'not-allowed',
-            transition: 'all 0.2s',
-          }}
-        >
-          批量导出 ({selectedIds.size})
-        </button>
+      <div style={{ padding: '8px', borderTop: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            onClick={() => onBatchExport('png')}
+            disabled={selectedIds.size === 0}
+            style={{
+              flex: 1, padding: '8px 0', fontSize: 13, fontWeight: 500,
+              color: selectedIds.size > 0 ? '#fff' : '#9ca3af',
+              backgroundColor: selectedIds.size > 0 ? '#3b82f6' : '#e5e7eb',
+              border: 'none', borderRadius: 6,
+              cursor: selectedIds.size > 0 ? 'pointer' : 'not-allowed',
+              transition: 'all 0.2s',
+            }}
+          >
+            批量导出 PNG ({selectedIds.size})
+          </button>
+          <button
+            onClick={() => onBatchExport('bmp')}
+            disabled={selectedIds.size === 0}
+            style={{
+              flex: 1, padding: '8px 0', fontSize: 13, fontWeight: 500,
+              color: selectedIds.size > 0 ? '#fff' : '#9ca3af',
+              backgroundColor: selectedIds.size > 0 ? '#059669' : '#e5e7eb',
+              border: 'none', borderRadius: 6,
+              cursor: selectedIds.size > 0 ? 'pointer' : 'not-allowed',
+              transition: 'all 0.2s',
+            }}
+          >
+            批量导出 BMP ({selectedIds.size})
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -229,9 +229,7 @@ export default function App() {
     const entry = staticEntries.find(e => e.id === id);
     if (!entry) return;
     
-    // 联动左侧列表：选中当前 ID，高亮并滚动
-    setSelectedIds(new Set([id]));
-    setScrollToId(id);
+    // 联动左侧列表：背景色高亮，但不滚动（滑轮切换时才会滚动）
 
     const cacheKey = `static_${id}`;
     if (loadedCache.current.has(cacheKey)) {
@@ -239,6 +237,7 @@ export default function App() {
       console.log("setCurrentDataUrl from cache, url length=" + (c.dataUrl ? c.dataUrl.length : 0));
       setCurrentDataUrl(c.dataUrl);
       setCurrentImageInfo({ id: entry.id, width: c.width, height: c.height });
+      setCurrentImageData(c.imageData);
       setCurrentFrames([]);
       return;
     }
@@ -253,6 +252,7 @@ export default function App() {
       console.log("setCurrentDataUrl called, url length=" + (result.dataUrl ? result.dataUrl.length : 0));
       setCurrentDataUrl(result.dataUrl);
       setCurrentImageInfo({ id: entry.id, width: result.width, height: result.height });
+      setCurrentImageData(result.imageData);
     } else if (result.error) {
       showToast(`加载 ID ${entry.id} 失败: ${result.error}`, 'error');
     }
@@ -297,13 +297,21 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
   const handlePrevStatic = useCallback(() => {
     if (!staticEntries || currentImageInfo == null) return;
     const idx = staticEntries.findIndex(e => e.id === currentImageInfo.id);
-    if (idx > 0) handleSelectStatic(staticEntries[idx - 1].id);
+    if (idx > 0) {
+      const prevId = staticEntries[idx - 1].id;
+      setScrollToId(prevId);
+      handleSelectStatic(prevId);
+    }
   }, [staticEntries, currentImageInfo, handleSelectStatic]);
 
   const handleNextStatic = useCallback(() => {
     if (!staticEntries || currentImageInfo == null) return;
     const idx = staticEntries.findIndex(e => e.id === currentImageInfo.id);
-    if (idx < staticEntries.length - 1) handleSelectStatic(staticEntries[idx + 1].id);
+    if (idx < staticEntries.length - 1) {
+      const nextId = staticEntries[idx + 1].id;
+      setScrollToId(nextId);
+      handleSelectStatic(nextId);
+    }
   }, [staticEntries, currentImageInfo, handleSelectStatic]);
 
   const handleSelectAnimation = useCallback(async (id) => {
@@ -349,25 +357,36 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
   const handleDeselectAll = useCallback(() => setSelectedIds(new Set()), []);
 
   const handleExportStatic = useCallback(async (format = 'png') => {
-    if (!currentImageData || !currentImageInfo) { showToast('当前无图片可导出', 'warning'); return; }
+    if (!currentDataUrl || !currentImageInfo) { showToast('当前无图片可导出', 'warning'); return; }
     const { id, width, height } = currentImageInfo;
+    const mimeType = format === 'bmp' ? 'image/bmp' : 'image/png';
+    // 统一走 canvas，用 scale(1, -1) 翻转回正
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = currentDataUrl;
+    });
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext('2d');
-    ctx.putImageData(currentImageData, 0, 0);
-    const mimeType = format === 'bmp' ? 'image/bmp' : 'image/png';
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, mimeType));
-    downloadBlob(blob, getPetFilename(id, format));
+    ctx.translate(0, height);
+    ctx.scale(1, -1);
+    ctx.drawImage(img, 0, 0);
+    const finalBlob = await new Promise(r => canvas.toBlob(r, mimeType));
+    downloadBlob(finalBlob, getPetFilename(id, format));
     showToast('下载成功', 'success');
-  }, [currentImageData, currentImageInfo, showToast]);
+  }, [currentDataUrl, currentImageInfo, showToast]);
 
-  const handleBatchExport = useCallback(async () => {
+  const handleBatchExport = useCallback(async (format = 'png') => {
     if (selectedIds.size === 0) { showToast('请先选择项目', 'warning'); return; }
     const items = fileType === 'static' ? staticEntries : animGroups;
     if (!items) { showToast('无数据', 'warning'); return; }
     const selected = items.filter(r => selectedIds.has(r.id));
     if (selected.length === 0) { showToast('所选无数据', 'warning'); return; }
 
+    const mimeType = format === 'bmp' ? 'image/bmp' : 'image/png';
+    const ext = format === 'bmp' ? 'bmp' : 'png';
     setExportProgress(`加载中 ${selected.length} 项...`);
     try {
       const files = [];
@@ -375,12 +394,21 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
         if (fileType === 'static') {
           const result = await loadStaticImage(realBlobRef.current, selected[i], palettesRef.current);
           if (result.dataUrl) {
+            // 用 img 加载 dataUrl 再 draw 到 canvas 做翻转
+            const img = await new Promise((resolve, reject) => {
+              const ii = new Image();
+              ii.onload = () => resolve(ii);
+              ii.onerror = reject;
+              ii.src = result.dataUrl;
+            });
             const canvas = document.createElement('canvas');
             canvas.width = result.width; canvas.height = result.height;
             const ctx = canvas.getContext('2d');
-            ctx.putImageData(result.imageData, 0, 0);
-            const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
-            files.push({ name: getPetFilename(selected[i].id, 'png'), blob });
+            ctx.translate(0, result.height);
+            ctx.scale(1, -1);
+            ctx.drawImage(img, 0, 0);
+            const blob = await new Promise(r => canvas.toBlob(r, mimeType));
+            files.push({ name: getPetFilename(selected[i].id, ext), blob });
           }
         }
         setExportProgress(`加载中... ${i + 1}/${selected.length}`);
@@ -388,7 +416,7 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
       if (files.length === 0) { showToast('无图片可导出', 'warning'); setExportProgress(''); return; }
       setExportProgress('打包 ZIP...');
       const zipBlob = await packToZip(files);
-      downloadBlob(zipBlob, `宠物_批量导出.zip`);
+      downloadBlob(zipBlob, `宠物_批量导出.${ext}.zip`);
       showToast(`下载成功:共 ${files.length} 张`, 'success');
     } catch (e) { showToast(`导出失败:${e.message}`, 'error'); }
     setExportProgress('');
