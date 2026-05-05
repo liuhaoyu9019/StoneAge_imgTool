@@ -480,8 +480,9 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
         backgroundColor: '#fff', borderBottom: '1px solid #e5e7eb',
         padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#1f2937' }}>
-          🦕 石器时代宠物图片解析工具
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#1f2937', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <img src="/logo.png" alt="logo" style={{ height: 48, width: 'auto' }} />
+          石器时代宠物图片解析工具
         </h1>
         <button onClick={() => setShowHelp(true)} title="帮助" style={{
           width: 36, height: 36, borderRadius: '50%', border: '1px solid #d1d5db',
@@ -533,7 +534,7 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
             )}
             {!fileType && fileStatus === 'idle' && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', fontSize: 13, padding: 20, textAlign: 'center' }}>
-                <div><div style={{ fontSize: 32, marginBottom: 8 }}>🦕</div><div>请上传 adrn+real 或 spradrn+spr 文件</div></div>
+                <div><div style={{ marginBottom: 8 }}><img src="/logo.png" alt="logo" style={{ height: 120, width: 'auto' }} /></div><div>请上传 adrn+real 或 spradrn+spr 文件</div></div>
               </div>
             )}
           </div>
@@ -571,7 +572,7 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
       </div>
 
       <footer style={{ backgroundColor: '#fff', borderTop: '1px solid #e5e7eb', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#9ca3af' }}>
-        <div>🦕 石器时代宠物图片解析工具 | 纯本地解析,不上传服务器</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><img src="/logo.png" alt="logo" style={{ height: 20, width: 'auto' }} /> 石器时代宠物图片解析工具 | 纯本地解析,不上传服务器</div>
         <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
           {errorLog && (
             <button onClick={() => { navigator.clipboard?.writeText(errorLog); showToast('已复制', 'info'); }}
