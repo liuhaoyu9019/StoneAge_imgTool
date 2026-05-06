@@ -210,12 +210,13 @@ function decompressJSSRLE(input, expectedLength) {
 async function readPaletteIndex(realFile, entry) {
   try {
     const rdOffset = entry.rleOffset - 16;
-    if (rdOffset < 0) return 0;
-    const header = await readSlice(realFile, rdOffset + 8, 1);
-    if (!header || header.length < 1) return 0;
+    if (rdOffset < 0) return 1;
+    // RD header byte 2 encodes the palette index (always 0x01 → palette 1 for all entries)
+    const header = await readSlice(realFile, rdOffset + 2, 1);
+    if (!header || header.length < 1) return 1;
     return header[0] & 0x0F;
   } catch {
-    return 0;
+    return 1;
   }
 }
 
@@ -347,6 +348,6 @@ export function parseAdrnSync(buffer) {
       length: pixelBytes,
     });
   }
-  
+
   return { entrySize: stride, entries };
 }

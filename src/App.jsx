@@ -12,6 +12,11 @@ import { Toast, HelpPanel } from './components/UIComponents';
 import { readAdrnBuffer, parseAdrnSync, readSpradrnBuffer, loadStaticImage, loadAnimationGroup, parseSapPalette } from './parsers/staticParser';
 import { packToZip, downloadBlob, getPetFilename } from './utils/exportUtils';
 
+// 调色板：始终使用 SAP 调色板（参考调色板来自 GIF，与 adrn 颜色索引不兼容）
+function getPalettesForEntry(_entry, sapPalettes) {
+  return sapPalettes;
+}
+
 export default function App() {
   const [indexFile, setIndexFile] = useState(null);
   const [pixelFile, setPixelFile] = useState(null);
@@ -161,7 +166,7 @@ export default function App() {
 
           console.log('正在同步解析...');
           const { entries } = parseAdrnSync(adrnBuf);
-          console.log('解析完成:', entries.length, '个条目, first:', JSON.stringify(entries[0]));
+          console.log('解析完成:', entries.length, '个条目');
 
 
 
@@ -183,7 +188,6 @@ export default function App() {
             console.warn('调色板加载失败:', e);
           }
 
-          window.__debugEntries = entries;
           setStaticEntries(entries);
           loadedCache.current.clear();
           if (!entries || entries.length === 0) {
@@ -228,7 +232,7 @@ export default function App() {
     if (!staticEntries || !realBlobRef.current) return;
     const entry = staticEntries.find(e => e.id === id);
     if (!entry) return;
-    
+
     // 联动左侧列表：背景色高亮，但不滚动（滑轮切换时才会滚动）
 
     const cacheKey = `static_${id}`;
@@ -246,7 +250,9 @@ export default function App() {
     setCurrentImageData(null);
     setCurrentFrames([]);
 
-    const result = await loadStaticImage(realBlobRef.current, entry, palettesRef.current);
+    const palettesToUse = getPalettesForEntry(entry, palettesRef.current);
+
+    const result = await loadStaticImage(realBlobRef.current, entry, palettesToUse);
     if (result.dataUrl) {
       loadedCache.current.set(cacheKey, result);
       console.log("setCurrentDataUrl called, url length=" + (result.dataUrl ? result.dataUrl.length : 0));
@@ -257,7 +263,7 @@ export default function App() {
       showToast(`加载 ID ${entry.id} 失败: ${result.error}`, 'error');
     }
     setImageLoading(false);
-    
+
   }, [staticEntries, showToast]);
 
 // 预加载附近条目的缓存
@@ -392,7 +398,8 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
       const files = [];
       for (let i = 0; i < selected.length; i++) {
         if (fileType === 'static') {
-          const result = await loadStaticImage(realBlobRef.current, selected[i], palettesRef.current);
+          const palettesToUse = getPalettesForEntry(selected[i], palettesRef.current);
+          const result = await loadStaticImage(realBlobRef.current, selected[i], palettesToUse);
           if (result.dataUrl) {
             // 用 img 加载 dataUrl 再 draw 到 canvas 做翻转
             const img = await new Promise((resolve, reject) => {
