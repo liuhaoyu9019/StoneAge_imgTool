@@ -1,23 +1,68 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 
+const SCROLL_SPEEDS = [1, 10, 100, 500, 1000, 2000, 5000, 10000];
+
 function ZoomableCanvas({ canvas, width, height, onPrev, onNext }) {
   const containerRef = useRef(null);
   const [scale, setScale] = useState(3);
-  const [dragging, setDragging] = useState(false);
   const sliderRef = useRef(null);
   
-  // 鼠标滑轮：切换上一张/下一张
+  // --- 自动滚动逻辑（全在组件内） ---
+  const timerRef = useRef(null);
+  const onPrevRef = useRef(onPrev);
+  const onNextRef = useRef(onNext);
+  onPrevRef.current = onPrev;
+  onNextRef.current = onNext;
+
+  const [dir, setDir] = useState(null); // null | 'up' | 'down'
+  const [speed, setSpeed] = useState(1);
+  const dirRef = useRef(dir);
+  dirRef.current = dir;
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+
+  const start = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    const base = 1500;
+    const ms = Math.max(10, base / speedRef.current);
+    timerRef.current = setInterval(() => {
+      if (dirRef.current === 'up') onPrevRef.current?.();
+      else if (dirRef.current === 'down') onNextRef.current?.();
+    }, ms);
+  }, []);
+
+  const stop = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  }, []);
+
+  useEffect(() => () => stop(), [stop]);
+
+  const toggle = useCallback((d) => {
+    setDir(prev => prev === d ? null : d);
+  }, []);
+
+  useEffect(() => {
+    if (dir) start(); else stop();
+  }, [dir, start, stop]);
+
+  useEffect(() => {
+    if (dir) start();
+  }, [speed, dir, start]);
+
+  // --- 用户交互时停止滚动 ---
+  const handleCanvasClick = useCallback(() => {
+    if (timerRef.current) { stop(); setDir(null); }
+    if (onNext) onNext();
+  }, [onNext, stop]);
+
   const handleWheel = useCallback((e) => {
     if (!onPrev || !onNext) return;
     e.preventDefault();
-    if (e.deltaY < 0) {
-      onPrev();
-    } else {
-      onNext();
-    }
-  }, [onPrev, onNext]);
+    if (timerRef.current) { stop(); setDir(null); }
+    if (e.deltaY < 0) onPrev();
+    else onNext();
+  }, [onPrev, onNext, stop]);
   
-  // 滑块拖动控制缩放
   const handleSliderChange = useCallback((e) => {
     setScale(Number(e.target.value));
   }, []);
@@ -30,7 +75,7 @@ function ZoomableCanvas({ canvas, width, height, onPrev, onNext }) {
         display: 'flex', flexDirection: 'column',
         backgroundColor: '#f3f4f6',
       }}>
-        <div ref={containerRef} onWheel={handleWheel} onClick={onNext} style={{
+        <div ref={containerRef} onWheel={handleWheel} onClick={handleCanvasClick} style={{
           flex: 1, overflow: 'hidden',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           backgroundColor: '#f3f4f6', position: 'relative',
@@ -52,6 +97,41 @@ function ZoomableCanvas({ canvas, width, height, onPrev, onNext }) {
           display: 'flex', alignItems: 'center', gap: 12,
           backgroundColor: '#fff', borderTop: '1px solid #e5e7eb',
         }}>
+          {/* ▲ ▼ 自动滚动按钮 + 速度按钮 */}
+          <div style={{ display: 'flex', gap: 3, alignItems: 'center', flexShrink: 0 }}>
+            <button onClick={() => toggle('up')}
+              title={dir === 'up' ? '停止向上滚动' : '向上自动滚动'}
+              style={{
+                padding: '4px 10px', fontSize: 13, fontWeight: 600,
+                border: '1px solid ' + (dir === 'up' ? '#3b82f6' : '#d1d5db'),
+                borderRadius: 4, cursor: 'pointer',
+                backgroundColor: dir === 'up' ? '#eff6ff' : '#fff',
+                color: dir === 'up' ? '#1e40af' : '#6b7280',
+              }}
+            >▲</button>
+            <button onClick={() => toggle('down')}
+              title={dir === 'down' ? '停止向下滚动' : '向下自动滚动'}
+              style={{
+                padding: '4px 10px', fontSize: 13, fontWeight: 600,
+                border: '1px solid ' + (dir === 'down' ? '#3b82f6' : '#d1d5db'),
+                borderRadius: 4, cursor: 'pointer',
+                backgroundColor: dir === 'down' ? '#eff6ff' : '#fff',
+                color: dir === 'down' ? '#1e40af' : '#6b7280',
+              }}
+            >▼</button>
+            <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))}
+              style={{
+                padding: '4px 6px', fontSize: 11, fontWeight: 600,
+                border: '1px solid #d1d5db', borderRadius: 4, cursor: 'pointer',
+                backgroundColor: '#fff', color: '#6b7280', fontFamily: 'monospace',
+                outline: 'none',
+              }}
+            >
+              {SCROLL_SPEEDS.map(s => (
+                <option key={s} value={s}>{s}×</option>
+              ))}
+            </select>
+          </div>
           <span style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>缩放:</span>
           <span style={{ fontSize: 12, color: '#9ca3af' }}>0.5×</span>
           <input
