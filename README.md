@@ -24,7 +24,15 @@ npm run dev
 
 ## 功能展示
 
-| 宠物解析与导出 | 人物骑乘形象 | 名称检索与预览 |
-| --- | --- | --- |
-| ![宠物解析与导出](docs/images/pet-preview.png) | ![人物骑乘形象](docs/images/rider-preview.png) | ![名称检索与预览](docs/images/pet-search.png) |
+### 宠物解析与导出
+
+<img src="docs/images/pet-preview.png" width="100%" alt="宠物解析与导出界面" />
+
+### 人物骑乘形象
+
+<img src="docs/images/rider-preview.png" width="100%" alt="人物骑乘形象界面" />
+
+### 名称检索与预览
+
+<img src="docs/images/pet-search.png" width="100%" alt="名称检索与预览界面" />
 
