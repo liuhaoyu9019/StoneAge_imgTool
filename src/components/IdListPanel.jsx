@@ -114,6 +114,14 @@ export default function IdListPanel({
       }
     }
   }, [searchTerm, items, onSelect, containerHeight]);
+
+  // 名称查询后，若右侧仍停留在不属于结果集的旧图像，则自动预览第一条匹配结果。
+  useEffect(() => {
+    if (!deferredSearchTerm || isNumericSearch || !onSelect || displayItems.length === 0) return;
+    const selectedInResults = displayItems.some((item) => (item.id ?? item) === selectedId);
+    if (selectedInResults) return;
+    onSelect(displayItems[0].id ?? displayItems[0]);
+  }, [deferredSearchTerm, displayItems, isNumericSearch, onSelect, selectedId]);
   
   const handleScroll = useCallback((e) => {
     setScrollTop(e.target.scrollTop);
@@ -124,6 +132,22 @@ export default function IdListPanel({
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setScrollTop(0);
   }, []);
+
+  const clearSearch = useCallback(() => {
+    setSearchTerm('');
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setScrollTop(0);
+  }, []);
+
+  const handleSearchKeyDown = useCallback((event) => {
+    if (event.key === 'Escape') {
+      clearSearch();
+      return;
+    }
+    if (event.key !== 'Enter' || isNumericSearch || displayItems.length === 0) return;
+    event.preventDefault();
+    onSelect?.(displayItems[0].id ?? displayItems[0]);
+  }, [clearSearch, displayItems, isNumericSearch, onSelect]);
   
   if (!hasData || !items) {
     return (
@@ -153,29 +177,47 @@ export default function IdListPanel({
       {/* 搜索框 */}
       <div style={{ padding: '8px 8px 6px' }}>
         <label htmlFor="image-list-search" style={{ display: 'block', marginBottom: 4, fontSize: 11, fontWeight: 600, color: '#4b5563' }}>
-          查找图像
+          按宠物名称或图像 ID 查询
         </label>
-        <input
-          id="image-list-search"
-          type="text"
-          placeholder="输入 ID 定位，输入名称筛选"
-          value={searchTerm}
-          onChange={handleSearchChange}
-          aria-describedby="image-list-search-help"
-          style={{
-            width: '100%',
-            height: 36,
-            padding: '0 10px',
-            fontSize: 13,
-            border: '1px solid #d1d5db',
-            borderRadius: 6,
-            outline: 'none',
-            boxSizing: 'border-box',
-            backgroundColor: '#f9fafb',
-          }}
-        />
+        <div style={{ position: 'relative' }}>
+          <input
+            id="image-list-search"
+            type="search"
+            placeholder="输入宠物名称，如：邦克普斯"
+            value={searchTerm}
+            onChange={handleSearchChange}
+            onKeyDown={handleSearchKeyDown}
+            aria-describedby="image-list-search-help"
+            style={{
+              width: '100%',
+              height: 36,
+              padding: searchTerm ? '0 34px 0 10px' : '0 10px',
+              fontSize: 13,
+              border: '1px solid #d1d5db',
+              borderRadius: 6,
+              outline: 'none',
+              boxSizing: 'border-box',
+              backgroundColor: '#f9fafb',
+            }}
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={clearSearch}
+              aria-label="清空查询"
+              title="清空查询"
+              style={{
+                position: 'absolute', right: 5, top: 5, width: 26, height: 26,
+                padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer',
+                color: '#6b7280', backgroundColor: 'transparent', fontSize: 17,
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
         <div id="image-list-search-help" style={{ marginTop: 4, fontSize: 10, color: '#9ca3af', lineHeight: 1.4 }}>
-          数字会定位原始 ID；中文会按宠物或人物名称筛选
+          支持名称及别名模糊查询并自动预览首项；输入纯数字可定位原始 ID
         </div>
       </div>
       
@@ -186,7 +228,7 @@ export default function IdListPanel({
       }}>
         <span style={{ fontSize: 12, color: '#6b7280' }}>
           {searchTerm
-            ? (isNumericSearch ? `定位 ID: ${searchTerm}` : `名称匹配 (${displayTotal})`)
+            ? (isNumericSearch ? `定位 ID: ${searchTerm}` : `查询结果 (${displayTotal})`)
             : `宠物与人物 (${displayTotal})`
           }
         </span>

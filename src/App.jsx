@@ -626,6 +626,7 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, 
                 onBatchExport={handleBatchExport}
                 loading={parsing || animLoading} hasData={fileStatus === 'done'}
                 getItemMeta={imageLabelIndex?.resolveGroup}
+                filterItemsByName={imageLabelIndex?.filterRelevantGroups}
               />
             )}
             {fileType && !imageLabelIndex && (

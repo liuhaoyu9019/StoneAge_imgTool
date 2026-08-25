@@ -38,6 +38,7 @@ export function createImageLabelIndex(data) {
   for (const [groupId, meta] of Object.entries(groups)) {
     groupSearchText.set(Number(groupId), normalizeSearchTerm([
       meta.label,
+      ...(meta.aliases || []),
       meta.category,
       `动画组${groupId}`,
     ].join(' ')));
@@ -45,6 +46,7 @@ export function createImageLabelIndex(data) {
   for (const [frameId, meta] of Object.entries(direct)) {
     directSearchText.set(Number(frameId), normalizeSearchTerm([
       meta.label,
+      ...(meta.aliases || []),
       meta.category,
     ].join(' ')));
   }
@@ -148,11 +150,23 @@ export function createImageLabelIndex(data) {
     });
   };
 
+  const filterGroups = (items, searchTerm, allowedCategories = null) => {
+    const term = normalizeSearchTerm(searchTerm);
+    if (!term) return items;
+    return items.filter((item) => {
+      const id = item?.id ?? item;
+      const meta = groups[id];
+      if (allowedCategories && !allowedCategories.has(meta?.category)) return false;
+      return groupSearchText.get(Number(id))?.includes(term) || false;
+    });
+  };
+
   return {
     resolveFrame,
     resolveGroup,
     filterFrames,
     filterRelevantFrames: (items, searchTerm) => filterFrames(items, searchTerm, RELEVANT_CATEGORIES),
+    filterRelevantGroups: (items, searchTerm) => filterGroups(items, searchTerm, RELEVANT_CATEGORIES),
     filterFramesByCategories,
     filterGroupsByCategories,
     stats: data?.stats || {},
