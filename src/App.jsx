@@ -2,7 +2,7 @@
  * App 主组件 - 使用 Web Worker 做解析,主线程完全不阻塞
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 
 import FileUpload from './components/FileUpload';
 import IdListPanel from './components/IdListPanel';
@@ -11,6 +11,7 @@ import { Toast, HelpPanel } from './components/UIComponents';
 
 import { readAdrnBuffer, parseAdrnSync, readSpradrnBuffer, loadStaticImage, loadAnimationGroup, parseSapPalette } from './parsers/staticParser';
 import { packToZip, downloadBlob, getPetFilename } from './utils/exportUtils';
+import { createImageLabelIndex } from './utils/imageLabelIndex';
 
 export default function App() {
   const [indexFile, setIndexFile] = useState(null);
@@ -31,6 +32,7 @@ export default function App() {
   const [staticPaletteIndex, setStaticPaletteIndex] = useState(1);
   // 7.5 客户端的 SAP 三字节颜色按 BGR 存储；PALET_1 是常态色盘。
   const [staticColorOrder, setStaticColorOrder] = useState('bgr');
+  const [imageLabelIndex, setImageLabelIndex] = useState(null);
 
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
   const [showHelp, setShowHelp] = useState(false);
@@ -54,6 +56,30 @@ export default function App() {
       if (workerRef.current) workerRef.current.terminate();
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/data/image-labels-7.5.json')
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => {
+        if (!cancelled) setImageLabelIndex(createImageLabelIndex(data));
+      })
+      .catch((error) => console.warn('名称映射加载失败:', error));
+    return () => { cancelled = true; };
+  }, []);
+
+  const petAndCharacterStaticEntries = useMemo(() => {
+    if (!staticEntries || !imageLabelIndex) return null;
+    return imageLabelIndex.filterFramesByCategories(staticEntries);
+  }, [staticEntries, imageLabelIndex]);
+
+  const petAndCharacterAnimGroups = useMemo(() => {
+    if (!animGroups || !imageLabelIndex) return null;
+    return imageLabelIndex.filterGroupsByCategories(animGroups);
+  }, [animGroups, imageLabelIndex]);
 
   useEffect(() => {
     if (showFirstGuide) {
@@ -196,7 +222,7 @@ export default function App() {
 
           const validCount = entries.filter(e => e.width > 0 && e.height > 0).length;
           console.log('Setting done: validCount=' + validCount + ' entries.length=' + entries.length);
-          showToast(`解析完成!共 ${validCount} 个宠物,点击 ID 加载`, 'success');
+          showToast(`解析完成!共 ${validCount} 个图像,点击名称或 ID 加载`, 'success');
           setFileStatus('done');
         } else {
           setFileType('animation');
@@ -324,24 +350,24 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, 
 }
 
   const handlePrevStatic = useCallback(() => {
-    if (!staticEntries || currentImageInfo == null) return;
-    const idx = staticEntries.findIndex(e => e.id === currentImageInfo.id);
+    if (!petAndCharacterStaticEntries || currentImageInfo == null) return;
+    const idx = petAndCharacterStaticEntries.findIndex(e => e.id === currentImageInfo.id);
     if (idx > 0) {
-      const prevId = staticEntries[idx - 1].id;
+      const prevId = petAndCharacterStaticEntries[idx - 1].id;
       setScrollToId(prevId);
       handleSelectStatic(prevId);
     }
-  }, [staticEntries, currentImageInfo, handleSelectStatic]);
+  }, [petAndCharacterStaticEntries, currentImageInfo, handleSelectStatic]);
 
   const handleNextStatic = useCallback(() => {
-    if (!staticEntries || currentImageInfo == null) return;
-    const idx = staticEntries.findIndex(e => e.id === currentImageInfo.id);
-    if (idx < staticEntries.length - 1) {
-      const nextId = staticEntries[idx + 1].id;
+    if (!petAndCharacterStaticEntries || currentImageInfo == null) return;
+    const idx = petAndCharacterStaticEntries.findIndex(e => e.id === currentImageInfo.id);
+    if (idx >= 0 && idx < petAndCharacterStaticEntries.length - 1) {
+      const nextId = petAndCharacterStaticEntries[idx + 1].id;
       setScrollToId(nextId);
       handleSelectStatic(nextId);
     }
-  }, [staticEntries, currentImageInfo, handleSelectStatic]);
+  }, [petAndCharacterStaticEntries, currentImageInfo, handleSelectStatic]);
 
   const handleSelectAnimation = useCallback(async (id) => {
     if (!animGroups || !sprBlobRef.current) return;
@@ -373,7 +399,9 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, 
   }, []);
 
   const handleSelectAll = useCallback(() => {
-    const items = staticEntries || animGroups || [];
+    const items = fileType === 'static'
+      ? (petAndCharacterStaticEntries || [])
+      : (petAndCharacterAnimGroups || []);
     // 全选最多 2000 条,超过则提示
     if (items.length > 2000) {
       showToast('批量导出最多支持 2000 项', 'warning');
@@ -381,7 +409,7 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, 
     } else {
       setSelectedIds(new Set(items.map(r => r.id)));
     }
-  }, [staticEntries, animGroups, showToast]);
+  }, [fileType, petAndCharacterStaticEntries, petAndCharacterAnimGroups, showToast]);
 
   const handleDeselectAll = useCallback(() => setSelectedIds(new Set()), []);
 
@@ -466,6 +494,11 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, 
     showToast('下载成功', 'success');
   }, [currentFrames, currentAnimInfo, showToast]);
 
+  const currentStaticMeta = useMemo(
+    () => currentImageInfo?.id != null ? imageLabelIndex?.resolveFrame(currentImageInfo.id) : null,
+    [currentImageInfo?.id, imageLabelIndex],
+  );
+
   const handleExportAnimationFrames = useCallback(async () => {
     if (currentFrames.length === 0) { showToast('无帧数据', 'warning'); return; }
     setExportProgress(`打包 ${currentFrames.length} 帧...`);
@@ -532,7 +565,7 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, 
           fontSize: 13, zIndex: 100, boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
           animation: 'slideUp 0.5s ease', maxWidth: '80%', textAlign: 'center',
         }}>
-          🎯 上传文件 → 点击 ID → 预览导出
+          🎯 上传文件 → 按名称或 ID 查找 → 预览导出
         </div>
       )}
 
@@ -569,9 +602,9 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, 
           </div>
 
           <div style={{ flex: 1, overflow: 'hidden' }}>
-            {fileType === 'static' && staticEntries && (
+            {fileType === 'static' && staticEntries && petAndCharacterStaticEntries && (
               <IdListPanel
-                items={staticEntries} type="static"
+                items={petAndCharacterStaticEntries} type="static"
                 selectedId={currentImageInfo?.id}
                 onSelect={handleSelectStatic}
                 selectedIds={selectedIds} onToggleSelect={handleToggleSelect}
@@ -579,18 +612,26 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, 
                 onBatchExport={handleBatchExport}
                 loading={parsing || imageLoading} hasData={fileStatus === 'done'}
                 scrollToId={scrollToId}
+                getItemMeta={imageLabelIndex?.resolveFrame}
+                filterItemsByName={imageLabelIndex?.filterRelevantFrames}
               />
             )}
-            {fileType === 'animation' && animGroups && (
+            {fileType === 'animation' && animGroups && petAndCharacterAnimGroups && (
               <IdListPanel
-                items={animGroups} type="animation"
+                items={petAndCharacterAnimGroups} type="animation"
                 selectedId={currentAnimInfo?.id}
                 onSelect={handleSelectAnimation}
                 selectedIds={selectedIds} onToggleSelect={handleToggleSelect}
                 onSelectAll={handleSelectAll} onDeselectAll={handleDeselectAll}
                 onBatchExport={handleBatchExport}
                 loading={parsing || animLoading} hasData={fileStatus === 'done'}
+                getItemMeta={imageLabelIndex?.resolveGroup}
               />
+            )}
+            {fileType && !imageLabelIndex && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#6b7280', fontSize: 13, padding: 20, textAlign: 'center' }}>
+                正在加载宠物与人物名称…
+              </div>
             )}
             {!fileType && fileStatus === 'idle' && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', fontSize: 13, padding: 20, textAlign: 'center' }}>
@@ -664,7 +705,7 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, 
             {fileType === 'static' && (
               <StaticPreview canvas={currentDataUrl} width={currentImageInfo?.width||0} height={currentImageInfo?.height||0}
                 id={currentImageInfo?.id} onExport={handleExportStatic} loading={imageLoading}
-                onPrev={handlePrevStatic} onNext={handleNextStatic} />
+                onPrev={handlePrevStatic} onNext={handleNextStatic} itemMeta={currentStaticMeta} />
             )}
             {fileType === 'animation' && (
               <AnimationPreview frames={currentFrames} frameCount={currentAnimInfo?.frameCount||0} delay={currentAnimInfo?.delay||1}

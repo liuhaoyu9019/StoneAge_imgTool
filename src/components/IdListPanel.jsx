@@ -3,9 +3,9 @@
  * 只渲染可视区域的条目，支持海量数据（24万+）
  */
 
-import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useRef, useState, useCallback, useMemo, useEffect, useDeferredValue } from 'react';
 
-const ITEM_HEIGHT = 32; // 每个条目的高度
+const ITEM_HEIGHT = 48; // 名称 + 原始 ID 两层信息
 const OVERSCAN = 10;    // 上下额外渲染的行数
 
 export default function IdListPanel({
@@ -21,6 +21,8 @@ export default function IdListPanel({
   loading,
   hasData,
   scrollToId,
+  getItemMeta,
+  filterItemsByName,
 }) {
   const containerRef = useRef(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -44,23 +46,29 @@ export default function IdListPanel({
   // 用 selectedIds 作为依赖，确保选中变化时列表重新计算
   // 注意: 这些 const 声明必须放在 displayItems 之前，因为 displayItems 引用了 searchTerm 和 filteredItems
   const [searchTerm, setSearchTerm] = useState('');
+  const deferredSearchTerm = useDeferredValue(searchTerm.trim());
+  const isNumericSearch = /^\d+$/.test(deferredSearchTerm);
   const filteredItems = useMemo(() => {
     if (!items) return [];
-    if (!searchTerm) return items;
-    const term = searchTerm.toLowerCase();
-    // 如果是纯数字搜索，显示匹配项前后各 10 个，方便上下切换
-    if (/^\d+$/.test(term)) {
-      const targetNum = parseInt(term, 10);
-      const exactIdx = items.findIndex(item => {
-        const id = item.id ?? item;
-        return id === targetNum;
-      });
-      return items;
-    }
-    return items;
-  }, [items, searchTerm]);
+    if (!deferredSearchTerm || isNumericSearch) return items;
+    if (filterItemsByName) return filterItemsByName(items, deferredSearchTerm);
+    if (!getItemMeta) return [];
+    const term = deferredSearchTerm.toLocaleLowerCase('zh-CN');
+    return items.filter((item) => {
+      const id = item.id ?? item;
+      const meta = getItemMeta(id);
+      const haystack = [meta?.label, ...(meta?.aliases || []), meta?.category]
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase('zh-CN');
+      return haystack.includes(term);
+    });
+  }, [items, deferredSearchTerm, isNumericSearch, filterItemsByName, getItemMeta]);
   
-  const displayItems = useMemo(() => searchTerm ? filteredItems : items, [items, searchTerm, filteredItems, selectedIds]);
+  const displayItems = useMemo(
+    () => deferredSearchTerm ? filteredItems : items,
+    [items, deferredSearchTerm, filteredItems],
+  );
   
   // scrollToId 变化时滚动列表到对应位置
   const scrolledRef = useRef(null);
@@ -113,13 +121,22 @@ export default function IdListPanel({
   
   const handleSearchChange = useCallback((e) => {
     setSearchTerm(e.target.value);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
     setScrollTop(0);
   }, []);
   
-  if (!hasData || !items || items.length === 0) {
+  if (!hasData || !items) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', fontSize: 13, padding: 20, textAlign: 'center' }}>
         <div><div style={{ fontSize: 24, marginBottom: 8 }}>⬆️</div><div>请上传文件后查看列表</div></div>
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#6b7280', fontSize: 13, padding: 20, textAlign: 'center', lineHeight: 1.6 }}>
+        当前文件中没有匹配到宠物或人物图像
       </div>
     );
   }
@@ -134,16 +151,22 @@ export default function IdListPanel({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* 搜索框 */}
-      <div style={{ padding: '8px 8px 4px' }}>
+      <div style={{ padding: '8px 8px 6px' }}>
+        <label htmlFor="image-list-search" style={{ display: 'block', marginBottom: 4, fontSize: 11, fontWeight: 600, color: '#4b5563' }}>
+          查找图像
+        </label>
         <input
+          id="image-list-search"
           type="text"
-          placeholder="搜索 ID 或名称..."
+          placeholder="输入 ID 定位，输入名称筛选"
           value={searchTerm}
           onChange={handleSearchChange}
+          aria-describedby="image-list-search-help"
           style={{
             width: '100%',
-            padding: '6px 8px',
-            fontSize: 12,
+            height: 36,
+            padding: '0 10px',
+            fontSize: 13,
             border: '1px solid #d1d5db',
             borderRadius: 6,
             outline: 'none',
@@ -151,6 +174,9 @@ export default function IdListPanel({
             backgroundColor: '#f9fafb',
           }}
         />
+        <div id="image-list-search-help" style={{ marginTop: 4, fontSize: 10, color: '#9ca3af', lineHeight: 1.4 }}>
+          数字会定位原始 ID；中文会按宠物或人物名称筛选
+        </div>
       </div>
       
       {/* 工具栏 */}
@@ -160,8 +186,8 @@ export default function IdListPanel({
       }}>
         <span style={{ fontSize: 12, color: '#6b7280' }}>
           {searchTerm
-            ? `搜索: ${displayTotal} 项`
-            : `${type === 'static' ? '宠物' : '动画'} (${displayTotal})`
+            ? (isNumericSearch ? `定位 ID: ${searchTerm}` : `名称匹配 (${displayTotal})`)
+            : `宠物与人物 (${displayTotal})`
           }
         </span>
         <div style={{ display: 'flex', gap: 4 }}>
@@ -181,17 +207,39 @@ export default function IdListPanel({
           minHeight: 200,
         }}
       >
+        {displayTotal === 0 && (
+          <div style={{ padding: '32px 16px', color: '#6b7280', fontSize: 13, textAlign: 'center', lineHeight: 1.6 }}>
+            没有匹配的宠物或人物
+          </div>
+        )}
         <div style={{ height: displayHeight, position: 'relative' }}>
           {displayItems.slice(visStart, visEnd).map((item, idx) => {
             const realIdx = visStart + idx;
             const id = item.id ?? item;
             const isSelected = selectedIds.has(id);
             const isCurrent = selectedId === id;
+            const meta = getItemMeta?.(id) || null;
+            const primaryText = meta?.label || `${type === 'static' ? '图像' : '动画'} ${id}`;
+            const secondaryParts = [`ID ${id}`];
+            if (meta?.category) secondaryParts.push(meta.category);
+            if (meta?.groupId && meta.groupId !== id) secondaryParts.push(`组 ${meta.groupId}`);
+            const secondaryText = meta ? secondaryParts.join(' · ') : '暂无名称映射';
             
             return (
               <div
                 key={id}
                 onClick={() => {onSelect(id); window.__lastClickedId = id;}}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelect(id);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                aria-current={isCurrent ? 'true' : undefined}
+                aria-label={`${primaryText}，${secondaryParts.join('，')}`}
+                title={`${primaryText}\n${secondaryParts.join(' · ')}${meta?.aliases?.length ? `\n别名: ${meta.aliases.join('、')}` : ''}`}
                 style={{
                   position: 'absolute',
                   top: realIdx * ITEM_HEIGHT,
@@ -212,18 +260,28 @@ export default function IdListPanel({
                   checked={isSelected}
                   onChange={() => onToggleSelect(id)}
                   onClick={(e) => e.stopPropagation()}
+                  aria-label={`选择 ${primaryText}`}
                   style={{ width: 13, height: 13, cursor: 'pointer', flexShrink: 0 }}
                 />
-                <span style={{
-                  fontSize: 12, fontFamily: 'monospace',
-                  color: isCurrent ? '#1e40af' : '#374151',
-                  fontWeight: isCurrent ? 600 : 400,
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                }}>
-                  {String(id).padStart(3, '0')}
+                <span style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', lineHeight: 1.25 }}>
+                  <span style={{
+                    fontSize: 12,
+                    color: isCurrent ? '#1e40af' : '#374151',
+                    fontWeight: meta?.label || isCurrent ? 600 : 500,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {primaryText}
+                  </span>
+                  <span style={{
+                    marginTop: 2, fontSize: 10, fontFamily: 'monospace',
+                    color: isCurrent ? '#3b82f6' : '#9ca3af',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {secondaryText}
+                  </span>
                 </span>
                 {item.width && item.height ? (
-                  <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 'auto', flexShrink: 0 }}>
+                  <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 2, flexShrink: 0 }}>
                     {item.width}×{item.height}
                   </span>
                 ) : null}

@@ -92,13 +92,17 @@ function ZoomableCanvas({ canvas, width, height, onPrev, onNext }) {
   return null;
 }
 
-export function StaticPreview({ canvas, width, height, id, onExport, loading, onPrev, onNext }) {
+export function StaticPreview({ canvas, width, height, id, onExport, loading, onPrev, onNext, itemMeta }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <ZoomableCanvas canvas={canvas} width={width} height={height} onPrev={onPrev} onNext={onNext} />
       <div style={{ padding: '8px 4px' }}>
-        <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 8, display: 'flex', gap: 16 }}>
+        <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 8, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          {itemMeta?.label && (
+            <span style={{ color: '#1f2937' }}>名称: <strong>{itemMeta.label}</strong></span>
+          )}
           <span>ID: <strong>{String(id).padStart(3, '0')}</strong></span>
+          {itemMeta?.groupId && <span>动画组: <strong>{itemMeta.groupId}</strong></span>}
           <span>尺寸: <strong>{width} × {height}</strong></span>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
