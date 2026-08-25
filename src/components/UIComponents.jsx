@@ -103,7 +103,7 @@ export function HelpPanel({ visible, onClose }) {
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <h3 style={{ margin: 0, fontSize: 18, color: '#1f2937' }}>操作说明</h3>
-        <button onClick={onClose} style={{
+        <button onClick={onClose} aria-label="关闭帮助" style={{
           background: 'none',
           border: 'none',
           fontSize: 24,
@@ -121,7 +121,7 @@ export function HelpPanel({ visible, onClose }) {
         
         <p><strong>第二步：选择预览</strong></p>
         <p style={{ color: '#6b7280', marginLeft: 8, marginBottom: 12 }}>
-          左侧列表点击宠物 ID，右侧显示对应图片/动画。动画支持播放/暂停，可调节速度。
+          左侧列表点击图像 ID，右侧显示对应图片/动画。7.5 客户端静态图默认使用 PALET_1 + BGR；也可手动切换色盘和颜色顺序。动画支持播放/暂停，可调节速度。
         </p>
         
         <p><strong>第三步：导出</strong></p>
@@ -132,6 +132,7 @@ export function HelpPanel({ visible, onClose }) {
         <p><strong>常见问题</strong></p>
         <p style={{ color: '#6b7280', marginLeft: 8 }}>
           • 文件配对失败？请确保文件名前缀一致，如 adrn_00.bin + real_00.bin<br/>
+          • 宠物颜色不同？7.5 的正确常态组合是 PALET_1 + BGR；PALET_0、2–15 主要用于变色/特效<br/>
           • 图片花屏？可能是文件不完整或版本不匹配<br/>
           • 全部在本地解析，文件不会上传到服务器
         </p>

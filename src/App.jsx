@@ -12,11 +12,6 @@ import { Toast, HelpPanel } from './components/UIComponents';
 import { readAdrnBuffer, parseAdrnSync, readSpradrnBuffer, loadStaticImage, loadAnimationGroup, parseSapPalette } from './parsers/staticParser';
 import { packToZip, downloadBlob, getPetFilename } from './utils/exportUtils';
 
-// 调色板：始终使用 SAP 调色板（参考调色板来自 GIF，与 adrn 颜色索引不兼容）
-function getPalettesForEntry(_entry, sapPalettes) {
-  return sapPalettes;
-}
-
 export default function App() {
   const [indexFile, setIndexFile] = useState(null);
   const [pixelFile, setPixelFile] = useState(null);
@@ -33,6 +28,9 @@ export default function App() {
   const [currentAnimInfo, setCurrentAnimInfo] = useState(null);
   const [animLoading, setAnimLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [staticPaletteIndex, setStaticPaletteIndex] = useState(1);
+  // 7.5 客户端的 SAP 三字节颜色按 BGR 存储；PALET_1 是常态色盘。
+  const [staticColorOrder, setStaticColorOrder] = useState('bgr');
 
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
   const [showHelp, setShowHelp] = useState(false);
@@ -46,6 +44,7 @@ export default function App() {
   const sprBlobRef = useRef(null);
   const palettesRef = useRef(null);
   const loadedCache = useRef(new Map());
+  const staticLoadRequestRef = useRef(0);
 
   // 清理 Worker
   useEffect(() => {
@@ -123,6 +122,7 @@ export default function App() {
       setCurrentFrames([]); setCurrentAnimInfo(null);
       setSelectedIds(new Set()); setErrorLog('');
       realBlobRef.current = null; sprBlobRef.current = null;
+      staticLoadRequestRef.current += 1;
       loadedCache.current.clear();
       pendingIndexRef.current = null; pendingPixelRef.current = null;
       return;
@@ -228,21 +228,27 @@ export default function App() {
     }
   }, [identifyFileType, showToast, parseSpradrnInWorker]);
 
-  const handleSelectStatic = useCallback(async (id) => {
+  const handleSelectStatic = useCallback(async (id, settings = {}) => {
     if (!staticEntries || !realBlobRef.current) return;
     const entry = staticEntries.find(e => e.id === id);
     if (!entry) return;
 
+    const paletteIndex = settings.paletteIndex ?? staticPaletteIndex;
+    const colorOrder = settings.colorOrder ?? staticColorOrder;
+    const requestId = ++staticLoadRequestRef.current;
+
     // 联动左侧列表：背景色高亮，但不滚动（滑轮切换时才会滚动）
 
-    const cacheKey = `static_${id}`;
+    const cacheKey = `static_${id}_p${paletteIndex}_${colorOrder}`;
     if (loadedCache.current.has(cacheKey)) {
       const c = loadedCache.current.get(cacheKey);
+      if (requestId !== staticLoadRequestRef.current) return;
       console.log("setCurrentDataUrl from cache, url length=" + (c.dataUrl ? c.dataUrl.length : 0));
       setCurrentDataUrl(c.dataUrl);
-      setCurrentImageInfo({ id: entry.id, width: c.width, height: c.height });
+      setCurrentImageInfo({ id: entry.id, width: c.width, height: c.height, paletteIndex, colorOrder });
       setCurrentImageData(c.imageData);
       setCurrentFrames([]);
+      setImageLoading(false);
       return;
     }
 
@@ -250,25 +256,40 @@ export default function App() {
     setCurrentImageData(null);
     setCurrentFrames([]);
 
-    const palettesToUse = getPalettesForEntry(entry, palettesRef.current);
-
-    const result = await loadStaticImage(realBlobRef.current, entry, palettesToUse);
+    const result = await loadStaticImage(realBlobRef.current, entry, palettesRef.current, { paletteIndex, colorOrder });
+    if (requestId !== staticLoadRequestRef.current) return;
     if (result.dataUrl) {
       loadedCache.current.set(cacheKey, result);
       console.log("setCurrentDataUrl called, url length=" + (result.dataUrl ? result.dataUrl.length : 0));
       setCurrentDataUrl(result.dataUrl);
-      setCurrentImageInfo({ id: entry.id, width: result.width, height: result.height });
+      setCurrentImageInfo({ id: entry.id, width: result.width, height: result.height, paletteIndex, colorOrder });
       setCurrentImageData(result.imageData);
     } else if (result.error) {
       showToast(`加载 ID ${entry.id} 失败: ${result.error}`, 'error');
     }
     setImageLoading(false);
 
-  }, [staticEntries, showToast]);
+  }, [staticEntries, showToast, staticPaletteIndex, staticColorOrder]);
+
+  const handlePaletteIndexChange = useCallback((event) => {
+    const paletteIndex = Number(event.target.value);
+    setStaticPaletteIndex(paletteIndex);
+    if (currentImageInfo?.id != null) {
+      handleSelectStatic(currentImageInfo.id, { paletteIndex, colorOrder: staticColorOrder });
+    }
+  }, [currentImageInfo, handleSelectStatic, staticColorOrder]);
+
+  const handleColorOrderChange = useCallback((event) => {
+    const colorOrder = event.target.value;
+    setStaticColorOrder(colorOrder);
+    if (currentImageInfo?.id != null) {
+      handleSelectStatic(currentImageInfo.id, { paletteIndex: staticPaletteIndex, colorOrder });
+    }
+  }, [currentImageInfo, handleSelectStatic, staticPaletteIndex]);
 
 // 预加载附近条目的缓存
 let preloadTaskId = 0;
-function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) {
+function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache, settings = {}) {
   const taskId = ++preloadTaskId;
   const idx = entries.findIndex(e => e.id === currentEntry.id);
   if (idx < 0) return;
@@ -284,12 +305,14 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
     if (taskId !== preloadTaskId) return; // 新任务取消了旧任务
     for (let i = start; i < end; i++) {
       const e = entries[i];
-      const key = `static_${e.id}`;
+      const paletteIndex = settings.paletteIndex ?? 1;
+      const colorOrder = settings.colorOrder ?? 'bgr';
+      const key = `static_${e.id}_p${paletteIndex}_${colorOrder}`;
       if (cache.has(key)) continue;
       // 只在 STEP 间隔的边界加载
       if ((i - start) % STEP !== 0 && (i - start) !== 0 && (i - start) !== (end - start - 1)) continue;
       try {
-        const result = await loadStaticImage(realBlob, e, palettes);
+        const result = await loadStaticImage(realBlob, e, palettes, settings);
         if (result.dataUrl) {
           cache.set(key, result);
         }
@@ -398,8 +421,10 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
       const files = [];
       for (let i = 0; i < selected.length; i++) {
         if (fileType === 'static') {
-          const palettesToUse = getPalettesForEntry(selected[i], palettesRef.current);
-          const result = await loadStaticImage(realBlobRef.current, selected[i], palettesToUse);
+          const result = await loadStaticImage(realBlobRef.current, selected[i], palettesRef.current, {
+            paletteIndex: staticPaletteIndex,
+            colorOrder: staticColorOrder,
+          });
           if (result.dataUrl) {
             // 用 img 加载 dataUrl 再 draw 到 canvas 做翻转
             const img = await new Promise((resolve, reject) => {
@@ -427,7 +452,7 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
       showToast(`下载成功:共 ${files.length} 张`, 'success');
     } catch (e) { showToast(`导出失败:${e.message}`, 'error'); }
     setExportProgress('');
-  }, [selectedIds, fileType, staticEntries, animGroups, showToast]);
+  }, [selectedIds, fileType, staticEntries, animGroups, showToast, staticPaletteIndex, staticColorOrder]);
 
   const handleExportAnimationFrame = useCallback(async (frameIdx) => {
     const frame = currentFrames[frameIdx];
@@ -519,7 +544,7 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
           <img src="/logo.png" alt="logo" style={{ height: 48, width: 'auto' }} />
           石器时代宠物图片解析工具
         </h1>
-        <button onClick={() => setShowHelp(true)} title="帮助" style={{
+        <button onClick={() => setShowHelp(true)} title="帮助" aria-label="打开帮助" style={{
           width: 36, height: 36, borderRadius: '50%', border: '1px solid #d1d5db',
           backgroundColor: '#fff', cursor: 'pointer', fontSize: 18, color: '#6b7280',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -576,9 +601,58 @@ function preloadNearbyEntries(realBlob, entries, currentEntry, palettes, cache) 
         </div>
 
         <div style={{ flex: 1, backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #e5e7eb', fontSize: 14, fontWeight: 500, color: '#6b7280' }}>
-            预览 {imageLoading || animLoading ? '(加载中...)' : ''}
+          <div style={{
+            padding: '10px 16px', borderBottom: '1px solid #e5e7eb', fontSize: 14,
+            fontWeight: 500, color: '#6b7280', display: 'flex', alignItems: 'center',
+            justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+          }}>
+            <span>预览 {imageLoading || animLoading ? '(加载中...)' : ''}</span>
+            {fileType === 'static' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 400 }}>
+                  <span>调色板</span>
+                  <select
+                    value={staticPaletteIndex}
+                    onChange={handlePaletteIndexChange}
+                    aria-label="静态图片调色板"
+                    title="REAL 文件只保存颜色索引，请选择客户端实际使用的 SAP 调色板"
+                    style={{
+                      minWidth: 82, height: 36, padding: '0 28px 0 10px', borderRadius: 6,
+                      border: '1px solid #d1d5db', backgroundColor: '#fff', color: '#374151', cursor: 'pointer',
+                    }}
+                  >
+                    {Array.from({ length: 16 }, (_, index) => (
+                      <option key={index} value={index}>PALET_{index}</option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 400 }}>
+                  <span>颜色顺序</span>
+                  <select
+                    value={staticColorOrder}
+                    onChange={handleColorOrderChange}
+                    aria-label="SAP 颜色通道顺序"
+                    title="石器时代 7.5 客户端使用 BGR；RGB 仅用于兼容其他版本或转换工具"
+                    style={{
+                      minWidth: 108, height: 36, padding: '0 28px 0 10px', borderRadius: 6,
+                      border: '1px solid #d1d5db', backgroundColor: '#fff', color: '#374151', cursor: 'pointer',
+                    }}
+                  >
+                    <option value="bgr">BGR（7.5 正确）</option>
+                    <option value="rgb">RGB（其他版本）</option>
+                  </select>
+                </label>
+              </div>
+            )}
           </div>
+          {fileType === 'static' && (
+            <div style={{
+              padding: '7px 16px', backgroundColor: '#eff6ff', borderBottom: '1px solid #dbeafe',
+              color: '#1e40af', fontSize: 12, lineHeight: 1.5,
+            }}>
+              已按 7.5 客户端的常态规则默认使用 PALET_1 + BGR。PALET_0、2–15 是变色/特效色盘；只有其他版本素材颜色异常时再切换。
+            </div>
+          )}
           <div style={{ flex: 1, overflow: 'auto' }}>
             {!fileType && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', fontSize: 14, padding: 40, textAlign: 'center' }}>

@@ -204,27 +204,14 @@ function decompressJSSRLE(input, expectedLength) {
 }
 
 /**
- * 从 RD 头部读取 paletteIndex (byte 8 的低4位)
- * RD 头在 realFile 中的 entry.rleOffset - 16 位置
- */
-async function readPaletteIndex(realFile, entry) {
-  try {
-    const rdOffset = entry.rleOffset - 16;
-    if (rdOffset < 0) return 1;
-    // RD header byte 2 encodes the palette index (always 0x01 → palette 1 for all entries)
-    const header = await readSlice(realFile, rdOffset + 2, 1);
-    if (!header || header.length < 1) return 1;
-    return header[0] & 0x0F;
-  } catch {
-    return 1;
-  }
-}
-
-/**
  * 静态图片加载——使用 JSS-RLE 解码 + SAP 调色板
+ *
+ * RD_HEADER 的 0x02 字段是压缩标志，不是调色板编号。REAL/ADRN
+ * 本身不携带可靠的逐图调色板信息，因此由调用方明确指定 SAP 调色板。
  */
-export async function loadStaticImage(realFile, entry, palettes) {
+export async function loadStaticImage(realFile, entry, palettes, options = {}) {
   const { id, width, height } = entry;
+  const { paletteIndex = 1, colorOrder = 'bgr' } = options;
   const pixelCount = width * height;
   
   try {
@@ -236,9 +223,6 @@ export async function loadStaticImage(realFile, entry, palettes) {
     
     // JSS-RLE 解码得到 8-bit 调色板索引
     const pixelData = decompressJSSRLE(rleData, pixelCount);
-    
-    // 从 RD header 读取 paletteIndex
-    const paletteIndex = await readPaletteIndex(realFile, entry);
     
     // 获取对应的调色板 (256 x [R,G,B])
     const palette = palettes && palettes[paletteIndex];
@@ -262,9 +246,11 @@ export async function loadStaticImage(realFile, entry, palettes) {
         data[p] = 0; data[p+1] = 0; data[p+2] = 0; data[p+3] = 0;
       } else {
         const color = palette[idx] || [0, 0, 0];
-        data[p] = color[0];
+        // 石器时代 7.5 客户端的 SAP 色值按 BGR 存储。RGB 仅保留为
+        // 其他客户端版本或第三方转换文件的兼容选项。
+        data[p] = colorOrder === 'bgr' ? color[2] : color[0];
         data[p+1] = color[1];
-        data[p+2] = color[2];
+        data[p+2] = colorOrder === 'bgr' ? color[0] : color[2];
         data[p+3] = 255;
       }
     }
@@ -272,7 +258,7 @@ export async function loadStaticImage(realFile, entry, palettes) {
     ctx.putImageData(imageData, 0, 0);
     const dataUrl = c.toDataURL('image/png');
     
-    return { id, width, height, dataUrl, error: null };
+    return { id, width, height, dataUrl, paletteIndex, colorOrder, error: null };
   } catch (e) {
     return { id, width, height, dataUrl: null, error: e.message };
   }
@@ -338,7 +324,9 @@ export function parseAdrnSync(buffer) {
     
     // 从 realOffset+16 开始是 RLE 数据，长度 rleTotalLen-16
     entries.push({
-      id: entries.length,
+      // SPR 帧引用的是 ADRN 记录下标。跳过无效记录时不能重新连续编号，
+      // 否则搜索到的图像 ID 会与真实宠物动画引用错位。
+      id: Math.floor(i / stride),
       offset: realOffset + 16,       // RLE 数据在 real 文件中的偏移
       rleOffset: realOffset + 16,    // 同 offset，供 readRleData 使用
       rleLength: rleTotalLen - 16,   // RLE 压缩数据长度
